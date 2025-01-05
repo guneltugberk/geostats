@@ -1,97 +1,191 @@
-# Geostatistics Python Package
+# Geostats
 
-## Overview
-The `Geostatistics` package provides a suite of tools for geostatistical analysis, including data visualization, variability analysis, and experimental variogram calculations. The package is designed to work with spatial data and offers flexibility for handling datasets in both Imperial and SI unit systems.
+**Geostats** is a Python package for geostatistical analysis, including experimental variogram calculation, variogram model fitting, and kriging interpolation. The package provides tools for both omnidirectional and directional variogram analysis and supports spherical variogram modeling.
 
 ## Features
-- Visualize spatial data distribution using scatter plots.
-- Analyze variability of a property along coordinates with mean and standard error bands.
-- Calculate experimental variograms to understand spatial dependence.
-- Support for user-defined binning and lag distances.
+
+- **Visualization**:
+  - Base map plotting for property distribution.
+  - Variability analysis for spatial data.
+- **Variogram Analysis**:
+  - Experimental omnidirectional and directional variogram calculation.
+  - Variogram model fitting with spherical models.
+  - Confidence interval visualization for fitted variogram models.
+- **Kriging Interpolation**:
+  - Perform kriging interpolation with a fitted spherical variogram model.
+
+---
 
 ## Installation
-This project requires Python 3.7 or higher. Install the required dependencies using:
+
+To install and use the `geostats` package, ensure you have the required dependencies installed. Use the following commands to set up the environment:
+
 ```bash
-pip install numpy pandas matplotlib seaborn scikit-learn
+pip install numpy pandas matplotlib seaborn scikit-learn scipy
 ```
 
-## Usage
-### Initialization
-The `Geostatistics` class requires the following parameters for initialization:
-- `data` (DataFrame): The input dataset.
-- `property` (str): The name of the property column for analysis.
-- `x_coord` (str): The name of the X coordinate column.
-- `y_coord` (str): The name of the Y coordinate column.
-- `step_property` (int, optional): Step size for property binning (default is 5).
-- `step_coords` (int, optional): Step size for coordinate binning (default is 100).
-- `unit_system` (str, optional): Unit system (default is 'Imperial').
+---
 
-### Example
+## How to Use
+
+### 1. Initialization
+Create an instance of the `Geostatistics` class by providing your dataset and relevant parameters.
+
 ```python
+from geostats import Geostatistics
 import pandas as pd
-from geostatistics import Geostatistics
 
-# Load your data
-data = pd.read_csv("your_data.csv")
+# Example dataset
+data = pd.DataFrame({
+    'X': [100, 200, 300, 400],
+    'Y': [500, 600, 700, 800],
+    'Property': [1.5, 2.3, 2.8, 3.1]
+})
 
-# Initialize the Geostatistics class
-gs = Geostatistics(data=data, property="Porosity", x_coord="X", y_coord="Y")
-
-# Plot the base map
-gs.base_map()
-
-# Analyze variability
-gs.plot_property_variability(bins=10)
-
-# Calculate and plot experimental variogram
-gs.plot_variogram(lag_distance=50)
+geo = Geostatistics(data, property='Property', x_coord='X', y_coord='Y')
 ```
 
-## Methods
-### `base_map()`
-Visualizes the distribution of the property against X and Y coordinates using scatter plots.
+### 2. Base Map
+Visualize the distribution of the property on a scatter plot.
 
-### `calculate_variability(bin_col, bins)`
-Calculates mean, variance, and standard error for binned data.
-- **Parameters**:
-  - `bin_col` (str): Column name for binning.
-  - `bins` (int): Number of bins.
-- **Returns**:
-  - Tuple of bin midpoints, mean, variance, and standard error.
+```python
+geo.base_map()
+```
 
-### `plot_variability(ax, midpoints, mean, se, title, xlabel)`
-Plots mean and standard error for binned data.
+### 3. Variability Analysis
+Plot the variability of the property along the X and Y coordinates.
 
-### `plot_property_variability(bins)`
-Visualizes the variability of the property along the X and Y coordinates with standard error bands.
-- **Parameters**:
-  - `bins` (int): Number of bins.
+```python
+geo.plot_property_variability(bins=5)
+```
 
-### `calculate_variogram(lag_distance, max_distance=None)`
-Calculates the experimental variogram.
-- **Parameters**:
-  - `lag_distance` (float): Lag distance for binning.
-  - `max_distance` (float, optional): Maximum distance for analysis.
-- **Returns**:
-  - Tuple of bin midpoints, semi-variances, and number of pairs.
+### 4. Omnidirectional Variogram
+Calculate and plot the experimental omnidirectional variogram.
 
-### `plot_variogram(lag_distance, max_distance=None)`
-Plots the experimental variogram with the sill value.
-- **Parameters**:
-  - `lag_distance` (float): Lag distance for binning.
-  - `max_distance` (float, optional): Maximum distance for analysis.
+```python
+lag_distance = 100
+max_distance = 500
+bin_midpoints, semi_variances, pair_counts = geo.omnidirectional_variogram(
+    lag_distance=lag_distance, max_distance=max_distance, plot=True
+)
+```
+
+### 5. Variogram Model Fitting
+Fit a spherical variogram model to the experimental variogram data.
+
+```python
+optimized_params = geo.optimize_variogram(bin_midpoints, semi_variances, pair_counts)
+print("Optimized Parameters:", optimized_params)
+```
+
+### 6. Kriging Interpolation
+Perform kriging interpolation to predict a property at a given point.
+
+```python
+prediction_point = [250, 650]
+nugget, sill, range_ = optimized_params["nugget"], optimized_params["sill"], optimized_params["range"]
+
+predicted_value = geo.spherical_kriging(
+    prediction_point=prediction_point,
+    lag_distance=lag_distance,
+    max_distance=max_distance,
+    nugget=nugget,
+    sill=sill,
+    range_=range_
+)
+print("Predicted Value:", predicted_value)
+```
+
+---
+
+## API Reference
+
+### `class Geostatistics`
+
+#### Initialization
+```python
+Geostatistics(data, property, x_coord, y_coord, step_property=5, step_coords=100, unit_system='Imperial')
+```
+
+- **data**: `pd.DataFrame` – Input dataset.
+- **property**: `str` – Property column for analysis.
+- **x_coord**: `str` – X coordinate column name.
+- **y_coord**: `str` – Y coordinate column name.
+- **step_property**: `int` – Step size for property analysis.
+- **step_coords**: `int` – Step size for coordinate analysis.
+- **unit_system**: `str` – Unit system, either `'Imperial'` or `'SI'`.
+
+---
+
+### Methods
+
+#### Base Map
+```python
+base_map()
+```
+Plots a scatter map of the property distribution across X and Y coordinates.
+
+#### Variability Analysis
+```python
+plot_property_variability(bins)
+```
+Plots the mean and standard error of the property along X and Y.
+
+#### Omnidirectional Variogram
+```python
+omnidirectional_variogram(lag_distance, max_distance=None, plot=False)
+```
+Calculates and optionally plots the experimental omnidirectional variogram.
+
+#### Directional Variogram
+```python
+directional_variogram(lag_distance, azimuth, tolerance, max_distance=None, plot=False)
+```
+Calculates and optionally plots the experimental directional variogram.
+
+#### Variogram Fitting
+```python
+optimize_variogram(distances, semi_variances, pair_counts)
+```
+Optimizes nugget, sill, and range for a spherical variogram model and plots the fitted variogram.
+
+#### Kriging Interpolation
+```python
+spherical_kriging(prediction_point, lag_distance, max_distance, nugget, sill, range_, variogram_type='omnidirectional')
+```
+Predicts the property value at a given point using spherical kriging.
+
+---
+
+## Example Plots
+
+### 1. Base Map
+A scatter plot visualizing the spatial distribution of the property.
+
+### 2. Experimental Variogram
+A variogram plot showing experimental semi-variance values and fitted spherical model with confidence intervals.
+
+---
 
 ## Dependencies
-- Python 3.7+
-- numpy
-- pandas
-- matplotlib
-- seaborn
-- scikit-learn
+
+The `geostats` package requires the following Python libraries:
+- `numpy`
+- `pandas`
+- `matplotlib`
+- `seaborn`
+- `scikit-learn`
+- `scipy`
+
+---
+
+## Contributing
+
+Contributions to the `geostats` package are welcome! Feel free to open issues or submit pull requests on the repository.
+
+---
 
 ## License
-This project is licensed under the MIT License.
 
-## Contact
-For questions or contributions, please reach out to the project maintainer.
+This package is licensed under the MIT License.
 
