@@ -334,10 +334,10 @@ class Geostatistics:
         plt.title(f'Experimental Variogram of {self.property}')
 
         if self.unit_system == 'Imperial':
-            plt.xlabel('Distance, ft')
+            plt.xlabel('Distance (h), ft')
 
         elif self.unit_system == 'SI':
-            plt.xlabel('Distance, m')
+            plt.xlabel('Distance (h), m')
         
         else:
             raise ValueError("Please provide a proper unit system!")
@@ -347,7 +347,7 @@ class Geostatistics:
             if not np.isnan(y):  # Only annotate non-NaN points
                 plt.text(x, y, str(count), fontsize=14, ha='right', va='bottom')
         
-        plt.ylabel('Semi-Variance')
+        plt.ylabel(r'$\frac{1}{2} \cdot (z(x_i) - z(x_j))^2$')
         plt.legend()
 
         upper_limit_x = math.ceil((max(distances) + (max(distances) / self.step_coords)))
@@ -376,6 +376,7 @@ class Geostatistics:
         Returns:
             tuple: Bin midpoints, semi-variances, and number of pairs.
         """
+
         if lag_distance <= 0:
             raise ValueError("`lag_distance` must be positive.")
         if not (0 <= azimuth <= 360):
@@ -441,15 +442,15 @@ class Geostatistics:
         plt.title(f'Directional Variogram of {self.property} (Azimuth={azimuth}°)')
 
         if self.unit_system == 'Imperial':
-            plt.xlabel('Distance, ft')
+            plt.xlabel('Distance (h), ft')
 
         elif self.unit_system == 'SI':
-            plt.xlabel('Distance, m')
+            plt.xlabel('Distance (h), m')
         
         else:
             raise ValueError("Please provide a proper unit system!")
         
-        plt.ylabel('Semi-Variance')
+        plt.ylabel(r'$\frac{1}{2} \cdot (z(x_i) - z(x_j))^2$')
 
         upper_limit_x = math.ceil(max(distances) / self.step_coords) * self.step_coords
         plt.xlim(0, upper_limit_x)
@@ -479,6 +480,7 @@ class Geostatistics:
         Returns:
             callable: Spherical variogram function.
         """
+        
         def spherical_model(h):
             h = np.array(h)
             gamma = np.zeros_like(h)
