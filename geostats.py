@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import pairwise_distances
-from scipy.spatial.distance import cdist
 from scipy.optimize import minimize
 import math
 
@@ -28,6 +27,8 @@ class Geostatistics:
         self.step_property = step_property
         self.step_coords = step_coords
         self.unit_system = unit_system
+        self.init_cloud = None
+        self.init_exp = None
 
         # Coordinates
         self.X, self.Y = x_coord, y_coord
@@ -87,7 +88,7 @@ class Geostatistics:
 
         return midpoints, mean, var, se
 
-    def plot_variability(self, ax, midpoints, mean, se, title, xlabel):
+    def plot_variability(self, ax, midpoints, mean, se, title, xlabel, coord, include_observation=False):
         """
         Plot mean and standard error for binned data.
 
@@ -102,7 +103,12 @@ class Geostatistics:
         Returns:
             None
         """
-        sns.lineplot(x=midpoints, y=mean.values, ax=ax, lw=2, label=f'Mean {self.property}')
+
+        if include_observation:
+            sns.lineplot(x=self.data[coord], y=self.data[self.property], ax=ax, lw=2, label=f'Observed {self.property}')
+            
+        sns.lineplot(x=midpoints, y=mean.values, ax=ax, lw=2, label=f'Moving Average {self.property}', linestyle='--')
+
         ax.fill_between(
             midpoints,
             mean - se,
@@ -116,14 +122,13 @@ class Geostatistics:
         ax.set_ylabel(self.property)
         ax.legend()
 
-    def plot_property_variability(self, bins):
+    def plot_property_variability(self, bins, include_observation=False):
         """
         Plot variability along latitude and longitude with mean and standard error bands.
 
         Parameters:
-            latitude_col (str): Column name for latitude.
-            longitude_col (str): Column name for longitude.
             bins (int): Number of bins.
+            include_observation (bool): Whether to plot observation (default=False).
 
         Returns:
             None
@@ -137,12 +142,12 @@ class Geostatistics:
         lon_midpoints, lon_mean, _, lon_se = self.calculate_variability(self.X, bins)
 
         if self.unit_system == 'Imperial':
-            self.plot_variability(ax[0], lat_midpoints, lat_mean, lat_se, f'Variability of {self.property} on X', 'X (Midpoints), ft')
-            self.plot_variability(ax[1], lon_midpoints, lon_mean, lon_se, f'Variability of {self.property} on Y', 'Y (Midpoints), ft')
+            self.plot_variability(ax[0], lat_midpoints, lat_mean, lat_se, f'Variability of {self.property} on X', 'X (Midpoints), ft', self.Y, include_observation)
+            self.plot_variability(ax[1], lon_midpoints, lon_mean, lon_se, f'Variability of {self.property} on Y', 'Y (Midpoints), ft', self.X, include_observation)
 
         elif self.unit_system == 'SI':
-            self.plot_variability(ax[0], lat_midpoints, lat_mean, lat_se, f'Variability of {self.property} on X', 'X (Midpoints), m')
-            self.plot_variability(ax[1], lon_midpoints, lon_mean, lon_se, f'Variability of {self.property} on Y', 'Y (Midpoints), m')
+            self.plot_variability(ax[0], lat_midpoints, lat_mean, lat_se, f'Variability of {self.property} on X', 'X (Midpoints), m', self.Y, include_observation)
+            self.plot_variability(ax[1], lon_midpoints, lon_mean, lon_se, f'Variability of {self.property} on Y', 'Y (Midpoints), m', self.X, include_observation)
             
         else:
             raise ValueError("Please provide a proper unit system!")
@@ -171,47 +176,135 @@ class Geostatistics:
         plt.tight_layout()
         plt.show()
 
-    def omnidirectional_variogram(self, lag_distance, max_distance=None, plot=False):
+
+    def variogram_cloud(self, plot=False):
+        """
+        Constructs a variogram cloud based on input data.
+
+        Parameters:
+            plot (bool, optional): If True, plots the variogram cloud.
+
+        Returns:
+            int: Number of unique pairs used in the variogram cloud.
+            np.array: Pairwise distances.
+            np.array: Semi-variances for the pairs.
+        """
+
+        values = self.data[self.property].values 
+
+        # Calculate squared differences between all pairs of values with the 0.5 factor (Semi-variance)
+        pairwise_diff = 0.5 * (np.subtract.outer(values, values)**2)
+
+        # Ensure the coordinates are in NumPy array format
+        coordinates = self.data[[self.X, self.Y]].values  
+
+        # Calculate pairwise distances
+        pairwise_dist = pairwise_distances(coordinates)
+
+        # Extract the upper triangular part (excluding diagonal) to get unique pairs
+        self.distances = pairwise_dist[np.triu_indices_from(pairwise_dist, k=1)]
+        self.squared_differences = pairwise_diff[np.triu_indices_from(pairwise_diff, k=1)]
+
+        experimental_sill = self.data[self.property].var()
+
+        if plot:
+            plt.figure(figsize=(16, 9))
+            plt.scatter(self.distances, self.squared_differences, alpha=0.6, edgecolor='k', label="Experimental Pairs")
+            plt.axhline(y=experimental_sill, linestyle='--', color='red', label=f'Experimental Variance={round(experimental_sill, 3)}')
+
+            plt.ylabel(r'$\frac{1}{2} \cdot (z(x_i) - z(x_j))^2$')
+
+            if self.unit_system == 'Imperial':
+                plt.xlabel('Distance (h), ft')
+
+            elif self.unit_system == 'SI':
+                plt.xlabel('Distance (h), m')
+            
+            else:
+                raise ValueError("Please provide a proper unit system!")
+            
+            plt.grid(True, alpha=0.5)
+
+            upper_limit_x = math.ceil(max(self.distances) / self.step_coords) * self.step_coords
+            plt.xlim(0, upper_limit_x)
+
+            plt.legend()
+            plt.show()
+
+        # Return number of pairs and data for further analysis if needed
+        num_pairs = len(self.distances)
+
+        self.init_cloud = True # Initilize the cloud variogram
+
+        return num_pairs, self.distances, self.squared_differences
+    
+
+    def omnidirectional_variogram(self, lag_distance, max_distance=None, lag_tolerance=None, plot=False):
         """
         Calculate the experimental variogram with user-defined inputs.
 
         Parameters:
             lag_distance (float): User-defined lag distance for binning.
             max_distance (float, optional): Maximum distance to consider. Defaults to the maximum pairwise distance.
+            lag_tolerance (float, optional): Tolerance around each lag. Defaults to half of lag_distance.
+            plot (bool, optional): If True, plots the experimental variogram.
 
         Returns:
-            tuple: Bin midpoints, semi-variances, and number of pairs.
+            tuple: Lag centers, experimental variogram values, and number of pairs.
         """
+        if self.init_cloud is None:
+            raise ValueError("Variogram cloud must be computed before constructing the experimental variogram.")
+
         if lag_distance <= 0:
             raise ValueError("`lag_distance` must be positive.")
 
-        coords = self.data[[self.X, self.Y]].values
-        values = self.data[self.property].values
-
-        distances = pairwise_distances(coords)
-        value_diffs = np.subtract.outer(values, values) ** 2
-
-        # Define bins
         if max_distance is None:
-            max_distance = np.max(distances)
-        bins = np.arange(0, max_distance + lag_distance, lag_distance)
+            max_distance = np.max(self.distances)
 
-        # Calculate semi-variances
-        semi_variance = []
-        pair_counts = []
-        for i in range(len(bins) - 1):
-            mask = (distances >= bins[i]) & (distances < bins[i + 1])
-            pair_counts.append(np.sum(mask))
-            semi_variance.append(value_diffs[mask].mean() if np.any(mask) else np.nan)
+        if lag_tolerance is None:
+            lag_tolerance = lag_distance / 2
 
-        bin_midpoints = bins[:-1] + lag_distance / 2
+        # Initialize lists to store results
+        lag_centers = []
+        gamma_values = []
+        num_pairs = []
+
+        # Define lag bins
+        current_lag = lag_distance  # Start with the first lag
+        while current_lag <= max_distance:
+            # Define the bounds for the current lag bin
+            lower_bound = current_lag - lag_tolerance
+            upper_bound = current_lag + lag_tolerance
+
+            # Find distances within the current lag bin
+            in_bin = (self.distances >= lower_bound) & (self.distances < upper_bound)
+
+            # Calculate the average semi-variance (gamma) for this bin
+            if np.any(in_bin):  # Check if there are pairs in this bin
+                avg_gamma = np.mean(self.squared_differences[in_bin])
+                gamma_values.append(avg_gamma)
+                lag_centers.append(current_lag)
+                num_pairs.append(np.sum(in_bin))
+            else:  # No pairs in this bin
+                gamma_values.append(0)
+                lag_centers.append(current_lag)
+                num_pairs.append(0)
+
+            # Move to the next lag
+            current_lag += lag_distance
+
+        # Convert lists to arrays
+        lag_centers = np.array(lag_centers)
+        gamma_values = np.array(gamma_values)
+        num_pairs = np.array(num_pairs)
 
         if plot:
-                self._plot_variogram(bin_midpoints, semi_variance, pair_counts)
+            self._plot_variogram(lag_centers, gamma_values, num_pairs)
+        
+        self.init_exp = True
 
-        return bin_midpoints, semi_variance, pair_counts
-
-
+        return lag_centers, gamma_values, num_pairs
+       
     def _plot_variogram(self, distances, semi_variance, pair_counts):
         """
         Plot the experimental variogram with the sill value.
@@ -226,17 +319,17 @@ class Geostatistics:
             None
         """
 
-        sill = self.data[self.property].var()
+        exp_var = self.data[self.property].var()
 
         # Plot the variogram
         plt.figure(figsize=(16, 9))
         plt.plot(distances, semi_variance, marker='o', label='Experimental Variogram')
 
-        if sill < 0.01:
-            plt.axhline(y=sill, color='red', linestyle='--', label=f'Sill = {sill:.4f}')
+        if exp_var < 0.01:
+            plt.axhline(y=exp_var, color='red', linestyle='--', label=f'Experimental Variance={round(exp_var, 5)}')
         
         else:
-            plt.axhline(y=sill, color='red', linestyle='--', label=f'Sill = {sill:.2f}')
+            plt.axhline(y=exp_var, color='red', linestyle='--', label=f'Experimental Variance={round(exp_var, 3)}')
             
         plt.title(f'Experimental Variogram of {self.property}')
 
@@ -257,7 +350,7 @@ class Geostatistics:
         plt.ylabel('Semi-Variance')
         plt.legend()
 
-        upper_limit_x = math.ceil(max(distances) / self.step_coords) * self.step_coords
+        upper_limit_x = math.ceil((max(distances) + (max(distances) / self.step_coords)))
         plt.xlim(0, upper_limit_x)
         plt.ylim(0)
 
@@ -265,6 +358,8 @@ class Geostatistics:
         
         plt.rcParams['font.family'] = 'Arial'
         plt.rcParams['font.size'] = 14
+
+        plt.tight_layout()
 
         plt.show()
     
@@ -371,81 +466,6 @@ class Geostatistics:
         plt.tight_layout()
         plt.show()
 
-    def spherical_kriging(self, prediction_point, lag_distance, max_distance, nugget, sill, range_, 
-                        variogram_type='omnidirectional', display_fitting=False, **kwargs):
-        """
-        Perform spherical kriging at a given prediction point.
-
-        Parameters:
-            prediction_point (array): Coordinates of the point to predict (e.g., [x, y]).
-            lag_distance (float): Lag distance for binning in the variogram.
-            max_distance (float): Maximum distance to consider.
-            nugget (float): Nugget effect.
-            sill (float): Sill (total variance).
-            range_ (float): Range (distance where autocorrelation diminishes).
-            variogram_type (str): Variogram type ('omnidirectional' or 'directional').
-            display_fitting (bool): Whether to display the variogram fitting plot.
-            kwargs: Additional arguments for directional variogram (e.g., azimuth, tolerance).
-
-        Returns:
-            float: Predicted value at the given point.
-        """
-        if len(prediction_point) != 2:
-            raise ValueError("Prediction point must have two coordinates (x, y).")
-
-        coords = self.data[[self.X, self.Y]].values
-        values = self.data[self.property].values
-
-        # Compute pairwise distances
-        distances = cdist(coords, coords)
-        prediction_distances = cdist(coords, [prediction_point]).flatten()
-
-        # Calculate variogram values based on the selected type
-        if variogram_type == 'omnidirectional':
-            bin_midpoints, semi_variances, _ = self.omnidirectional_variogram(lag_distance, max_distance)
-        elif variogram_type == 'directional':
-            azimuth = kwargs.get('azimuth', 0)
-            tolerance = kwargs.get('tolerance', 15)
-            bin_midpoints, semi_variances, _, _ = self.directional_variogram(
-                lag_distance, azimuth, tolerance, max_distance=max_distance
-            )
-        else:
-            raise ValueError("Invalid variogram type. Choose 'omnidirectional' or 'directional'.")
-
-        # Fit spherical variogram model
-        variogram_func = self._fit_spherical_model(nugget, sill, range_)
-
-        # Build the kriging matrix
-        n = len(values)
-        kriging_matrix = np.zeros((n + 1, n + 1))
-        for i in range(n):
-            for j in range(n):
-                kriging_matrix[i, j] = variogram_func(distances[i, j])
-        kriging_matrix[-1, :-1] = 1
-        kriging_matrix[:-1, -1] = 1
-
-        # Build the RHS vector
-        rhs = np.zeros(n + 1)
-        for i in range(n):
-            rhs[i] = variogram_func(prediction_distances[i])
-        rhs[-1] = 1
-
-        # Solve the kriging system of equations
-        try:
-            weights = np.linalg.solve(kriging_matrix, rhs)
-        except np.linalg.LinAlgError as e:
-            raise ValueError("Kriging matrix is singular. Check input parameters or dataset.") from e
-
-        # Compute the kriging prediction
-        prediction = np.dot(weights[:-1], values)
-
-        # Display variogram fitting if requested
-        if display_fitting:
-            self._plot_variogram_fitting(bin_midpoints, semi_variances, variogram_func, nugget, sill, range_)
-
-        return prediction
-
-
 
     def _fit_spherical_model(self, nugget, sill, range_):
         """
@@ -484,6 +504,7 @@ class Geostatistics:
 
         return spherical_model
 
+
     def _plot_variogram_fitting(self, distances, semi_variances, variogram_func, nugget, sill, range_):
         """
         Plot the experimental variogram and the fitted spherical model, including residual analysis
@@ -500,6 +521,7 @@ class Geostatistics:
         Returns:
             None
         """
+
         # Generate fitted variogram values
         fitted_variogram = variogram_func(distances)
 
@@ -516,7 +538,7 @@ class Geostatistics:
         upper_bound = np.concatenate(([nugget + rmse], fitted_variogram + rmse))
 
         # Plot experimental and fitted variograms
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(16, 9))
         plt.plot(distances, semi_variances, 'o', label='Experimental Variogram', markersize=8)
         plt.plot(extended_distances, extended_fitted_variogram, '-', label='Fitted Spherical Model', linewidth=2)
 
@@ -528,9 +550,18 @@ class Geostatistics:
         plt.plot([range_, range_], [0, sill], color='purple', linestyle='--', label=f'Range = {round(range_, 2)}')  # Vertical line limited to sill
 
         # Add plot details
-        plt.title('Variogram Fitting with Confidence Interval')
-        plt.xlabel('Distance')
-        plt.ylabel('Semi-Variance')
+        plt.title('Variogram Fitting')
+
+        if self.unit_system == 'Imperial':
+            plt.xlabel('Distance (h), ft')
+
+        elif self.unit_system == 'SI':
+            plt.xlabel('Distance (h), m')
+
+        else:
+            raise ValueError("Please provide a proper unit system!")
+        
+        plt.ylabel(r'$\frac{1}{2} \cdot (z(x_i) - z(x_j))^2$')
         
         plt.xlim(0)
         plt.ylim(0)
@@ -557,6 +588,10 @@ class Geostatistics:
         Returns:
             dict: Optimized nugget, sill, and range.
         """
+
+        if self.init_exp is None:
+            raise ValueError("Variogram cloud must be computed before constructing the experimental variogram.")
+    
         # Adaptive binning strategy
         distances = np.array(distances)
         semi_variances = np.array(semi_variances)
@@ -578,6 +613,7 @@ class Geostatistics:
             Returns:
                 float: Weighted RMSE with a penalty for mismatched sill.
             """
+
             nugget, sill, range_ = params
             variogram_func = self._fit_spherical_model(nugget, sill, range_)
             fitted_variogram = variogram_func(distances)
